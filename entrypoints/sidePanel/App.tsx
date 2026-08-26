@@ -40,61 +40,57 @@ const INGEST_URL =
   'http://127.0.0.1:8980/api/jobs/ingest';
 
 function findPanel(): HTMLElement | null {
-  const hide = [...document.querySelectorAll('button')].find((b) =>
-    /hide job/i.test((b.textContent ?? '').trim()),
-  );
-  if (!hide) return null;
-  return (
-    (hide.closest('aside') as HTMLElement | null) ||
-    (hide.closest('[role="dialog"]') as HTMLElement | null) ||
-    (hide.closest('section') as HTMLElement | null) ||
-    (hide.parentElement?.parentElement as HTMLElement | null) ||
-    null
-  );
+  return document.querySelector('.modal-content--job-drawer') as HTMLElement | null;
 }
 
 function readDrawer(): JobResult {
-  const drawer = findPanel() || document.querySelector(
+  const drawer = findPanel() || document.querySelector('.modal-overlay--drawer') || document.querySelector(
     'div[role="dialog"][aria-modal="true"].chakra-modal__content',
   );
   if (!drawer) return { ok: false, error: 'no panel' };
 
 
-  const title = drawer.querySelector('h1, h2, h3')?.textContent?.trim() ?? '';
-  const company = (drawer.querySelector('img[alt]')?.getAttribute('alt') ?? drawer.querySelector('h1, h2, h3')?.nextElementSibling?.textContent ?? '').replace(/^@\s*/, '').trim();
+  const title = drawer.querySelector('.jobs-drawer-company-copy h2')?.textContent?.trim() ?? '';
+  const company = (drawer.querySelector('.job-detail-company-name')?.textContent ?? '').replace(/^@\s*/, '').trim();
   const location =
-    [...drawer.querySelectorAll('div.flex.space-x-2 span')]
-      .map((el) => el.textContent?.trim())
-      .find((t) => t && /United States|, |\bRemote\b|\bHybrid\b/.test(t)) ?? '';
+    drawer.querySelector('.jobs-drawer-company-meta span:first-child')?.textContent?.trim() ?? '';
   const salary =
-    [...drawer.querySelectorAll('span, div')]
+    [...drawer.querySelectorAll('.jobs-drawer-company-meta span')]
       .map((el) => el.textContent?.trim())
-      .find((t) => t && /^\$[0-9]/.test(t) && t.length < 80) ?? '';
-  const href = drawer.querySelector('a[href^="http"]')?.getAttribute('href');
-  const apply_url = href ? new URL(href, window.location.origin).href : '';
-  const description = drawer.querySelector('article, [class*=description], [class*=prose]')?.textContent?.trim() ?? '';
+      .find((t) => t && /\$[0-9]/.test(t)) ?? '';
+  const prep = drawer.querySelector('a[href*="jobId="]')?.getAttribute('href') ?? '';
+  let apply_url = '';
+  if (prep) {
+    try {
+      const jobId = new URL(prep, window.location.origin).searchParams.get('jobId');
+      if (jobId) apply_url = 'https://app.jobcakes.com/jobs#' + jobId;
+    } catch {
+      /* ignore */
+    }
+  }
+  const description = drawer.querySelector('.modal-body')?.textContent?.trim() ?? '';
 
   return { ok: true, title, company, location, salary, apply_url, description };
 }
 
 function clickJobDescriptionTab() {
-  const drawer = findPanel() || document.querySelector(
+  const drawer = findPanel() || document.querySelector('.modal-overlay--drawer') || document.querySelector(
     'div[role="dialog"][aria-modal="true"].chakra-modal__content',
   );
   if (!drawer) return false;
   const descTab = [...drawer.querySelectorAll('button')].find((b) =>
     /job description/i.test(b.textContent ?? ''),
   );
-  descTab?.click();
+  // description is in .modal-body; do not click Apply
   return Boolean(descTab);
 }
 
 function closeAndHide(title: string) {
-  const drawer = findPanel() || document.querySelector(
+  const drawer = findPanel() || document.querySelector('.modal-overlay--drawer') || document.querySelector(
     'div[role="dialog"][aria-modal="true"].chakra-modal__content',
   ) as HTMLElement | null;
 
-  const panel = drawer?.querySelector('[data-testid="job-actions-panel"]') ?? drawer;
+  const panel = drawer;
 
   const hideBtn = [...(panel?.querySelectorAll('button') ?? [])].find((b) => {
     const t = `${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`;
@@ -103,7 +99,7 @@ function closeAndHide(title: string) {
   hideBtn?.click();
 
   const closeBtn =
-    (document.querySelector('[data-testid="drawer-header-close"]') as HTMLElement | null) ??
+    (document.querySelector('.modal-content--job-drawer .modal-close') as HTMLElement | null) ??
     ([...(drawer?.querySelectorAll('button') ?? [])].find((b) =>
       /close/i.test(b.getAttribute('aria-label') ?? ''),
     ) as HTMLElement | undefined) ??
