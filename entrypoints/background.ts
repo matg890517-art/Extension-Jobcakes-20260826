@@ -1,6 +1,6 @@
 export default defineBackground(() => {
   console.log('Hello background!', { id: browser.runtime.id });
-  browser.sidePanel?.setPanelBehavior({ openPanelOnActionClick: false });
+  browser.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true });
 
   const TARGETS = [/jobcakes\.com$/i];
 
@@ -28,11 +28,6 @@ export default defineBackground(() => {
     syncTab(tabId, tab.url);
   });
 
-  browser.action.onClicked.addListener(async (tab) => {
-    if (tab.id != null && isTarget(tab.url)) {
-      await browser.sidePanel.open({ tabId: tab.id });
-    }
-  });
 
   browser.tabs.query({}).then((tabs) => {
     for (const tab of tabs) {
