@@ -31,6 +31,7 @@ type JobResult = {
   postedAgo?: string;
   tags?: string[];
   skills?: string[];
+  companyTags?: string[];
   applicantsCount?: number;
   applicantsText?: string;
   apply_url?: string;
@@ -65,22 +66,30 @@ function readDrawer(): JobResult {
   const title = drawer.querySelector('.jobs-drawer-company-copy h2')?.textContent?.trim() ?? '';
   const company = (drawer.querySelector('.job-detail-company-name')?.textContent ?? '').replace(/^@\s*/, '').trim();
 
-  const logoEl = drawer.querySelector('.job-detail-company-logo');
-  const logo =
-    (logoEl instanceof HTMLImageElement ? logoEl.getAttribute('src') : null) ||
-    logoEl?.querySelector('img')?.getAttribute('src') ||
-    '';
+  const logoEl = drawer.querySelector('img.job-detail-company-logo');
+  let logo = '';
+  if (logoEl instanceof HTMLImageElement) {
+    const raw = logoEl.currentSrc || logoEl.src || logoEl.getAttribute('src') || '';
+    if (raw) {
+      try {
+        logo = new URL(raw, window.location.href).href;
+      } catch {
+        logo = raw;
+      }
+    }
+  }
 
   const companyNameEl = drawer.querySelector('.job-detail-company-name');
   const companyAnchor =
     companyNameEl instanceof HTMLAnchorElement
       ? companyNameEl
-      : (companyNameEl?.querySelector('a') ?? companyNameEl?.closest('a'));
+      : (companyNameEl?.querySelector('a') ?? null);
   let companyLink = '';
-  const companyHref = companyAnchor?.getAttribute('href');
-  if (companyHref) {
+  const companyHref = companyAnchor?.getAttribute('href') ?? '';
+  if (companyHref && companyHref !== '#' && !/^javascript:/i.test(companyHref)) {
     try {
-      companyLink = new URL(companyHref, window.location.origin).href;
+      const abs = new URL(companyHref, window.location.origin).href;
+      if (!/jobcakes\.com/i.test(abs)) companyLink = abs;
     } catch {
       companyLink = companyHref;
     }
@@ -91,21 +100,26 @@ function readDrawer(): JobResult {
     .filter(Boolean);
   const location = metaSpans[0] ?? '';
   const workplaceType = drawer.querySelector('.jobs-drawer-remote')?.textContent?.trim() ?? '';
-  const salary = metaSpans.find((t) => /\$[0-9]/.test(t)) ?? '';
-  const employmentType =
-    metaSpans.find((t) =>
-      /full[-\s]?time|part[-\s]?time|contract|intern|temporary/i.test(t),
-    ) ?? '';
-  const postedAgo = drawer.querySelector('.jobs-drawer-published-note')?.textContent?.trim() ?? '';
+  const salary = metaSpans.find((t) => /\$/.test(t)) ?? '';
+  const companyTags = metaSpans.filter((t) => /employee/i.test(t));
 
-  const boardPills = [...drawer.querySelectorAll('.jobs-job-board-pill')]
-    .map((el) => el.textContent?.trim() ?? '')
-    .filter(Boolean);
-  const tags = [...boardPills, workplaceType].filter((t, i, arr) => t && arr.indexOf(t) === i);
+  const postedRaw =
+    drawer.querySelector('.jobs-drawer-published-note span')?.textContent?.trim() ?? '';
+  const postedAgo = postedRaw.replace(/^published\s+/i, '');
 
-  const skills = [...(drawer.querySelector('.jobs-drawer-skill-chips')?.children ?? [])]
-    .map((el) => el.textContent?.trim() ?? '')
-    .filter(Boolean);
+  const skills: string[] = [];
+  const seenSkill = new Set<string>();
+  const skillRoot = drawer.querySelector('.jobs-drawer-skill-chips');
+  const skillNodes = [
+    ...(skillRoot ? [...skillRoot.children] : []),
+    ...drawer.querySelectorAll('[class*="skill-chip"]'),
+  ];
+  for (const el of skillNodes) {
+    const t = el.textContent?.trim() ?? '';
+    if (!t || seenSkill.has(t)) continue;
+    seenSkill.add(t);
+    skills.push(t);
+  }
 
   let applicantsCount: number | undefined;
   let applicantsText: string | undefined;
@@ -134,7 +148,40 @@ function readDrawer(): JobResult {
       /* ignore */
     }
   }
-  const description = drawer.querySelector('.modal-body')?.textContent?.trim() ?? '';
+
+  const descParts: string[] = [];
+  for (const section of drawer.querySelectorAll('.job-detail-section')) {
+    const heading = section.querySelector('h3.job-detail-section-title')?.textContent?.trim() ?? '';
+    if (!/^(summary|responsibilities|qualifications|about|description|requirements)\b/i.test(heading)) {
+      continue;
+    }
+    const bodyBits: string[] = [];
+    for (const p of section.querySelectorAll('p.job-detail-text')) {
+      const t = (p.textContent ?? '').replace(/\s+/g, ' ').trim();
+      if (t) bodyBits.push(t);
+    }
+    for (const li of section.querySelectorAll('ul.job-detail-list li')) {
+      const t = (li.textContent ?? '').replace(/\s+/g, ' ').trim();
+      if (t) bodyBits.push(t);
+    }
+    const body = bodyBits.join(' ');
+    if (body) descParts.push(`${heading}: ${body}`);
+  }
+  let description = descParts.join('\n\n');
+  if (!description) {
+    description = drawer.querySelector('.modal-body')?.textContent?.trim() ?? '';
+  }
+
+  let employmentType =
+    metaSpans.find((t) =>
+      /full[-\s]?time|part[-\s]?time|contract|intern|temporary/i.test(t),
+    ) ?? '';
+  if (!employmentType) {
+    const m = description.match(/\b(full[-\s]?time|part[-\s]?time|contract|intern(?:ship)?|temporary)\b/i);
+    if (m) employmentType = m[1];
+  }
+
+  const tags = [workplaceType, employmentType].filter((t, i, arr) => t && arr.indexOf(t) === i);
 
   return {
     ok: true,
@@ -149,6 +196,7 @@ function readDrawer(): JobResult {
     postedAgo,
     tags,
     skills,
+    companyTags,
     applicantsCount,
     applicantsText,
     apply_url,
@@ -162,10 +210,11 @@ function clickJobDescriptionTab() {
     'div[role="dialog"][aria-modal="true"].chakra-modal__content',
   );
   if (!drawer) return false;
-  const descTab = [...drawer.querySelectorAll('button')].find((b) =>
-    /job description/i.test(b.textContent ?? ''),
-  );
-  // description is in .modal-body; do not click Apply
+  const descTab = [...drawer.querySelectorAll('button')].find((b) => {
+    const t = (b.textContent ?? '').trim();
+    return /job description/i.test(t) && !/\bapply\b/i.test(t);
+  });
+  descTab?.click();
   return Boolean(descTab);
 }
 
@@ -295,24 +344,23 @@ export default function App() {
           company: {
             name: extracted.company,
             logo: extracted.logo,
-            tags: [],
+            tags: extracted.companyTags ?? [],
           },
           description: extracted.description,
           applyLink: extracted.apply_url,
-          companyLink: extracted.companyLink,
+          companyLink: extracted.companyLink ?? '',
           postedAgo: extracted.postedAgo,
           tags: extracted.tags ?? [],
           skills: extracted.skills ?? [],
           details: {
             location: extracted.location,
-            employmentType: extracted.employmentType,
+            employmentType: extracted.employmentType ?? '',
             workplaceType: extracted.workplaceType,
             salary: extracted.salary,
           },
-          applicants: {
-            count: extracted.applicantsCount,
-            text: extracted.applicantsText,
-          },
+          applicants: extracted.applicantsText
+            ? { count: extracted.applicantsCount, text: extracted.applicantsText }
+            : { count: null, text: '' },
           id: extracted.id,
           scrapeFrom: 'jobcakes',
         }),
@@ -401,6 +449,14 @@ export default function App() {
           {job?.ok && (
             <>
               <Divider />
+              {job.logo ? (
+                <Box
+                  component="img"
+                  src={job.logo}
+                  alt={job.company || ''}
+                  sx={{ width: 48, height: 48, objectFit: 'contain', borderRadius: 1 }}
+                />
+              ) : null}
               <Typography variant="subtitle2">{job.title}</Typography>
               <Typography variant="body2">{job.company}</Typography>
               <Typography variant="body2">{job.location}</Typography>
