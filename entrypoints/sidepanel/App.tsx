@@ -39,14 +39,17 @@ const INGEST_URL =
   (import.meta.env.WXT_INGEST_URL as string | undefined)?.replace(/^['"]|['"]$/g, '') ??
   'http://127.0.0.1:8980/api/jobs/ingest';
 
-function findPanel(): HTMLElement | null {
-  return document.querySelector('.modal-content--job-drawer') as HTMLElement | null;
-}
 
 function readDrawer(): JobResult {
-  const drawer = findPanel() || document.querySelector('.modal-overlay--drawer') || document.querySelector(
+  let drawer = document.querySelector('.modal-content--job-drawer') || document.querySelector(
     'div[role="dialog"][aria-modal="true"].chakra-modal__content',
   );
+  if (!drawer) {
+    const hide = [...document.querySelectorAll('button')].find((b) =>
+      /hide job/i.test((b.textContent ?? '').trim()),
+    );
+    drawer = hide?.closest('.modal-content--job-drawer') || hide?.closest('[role="dialog"]') || hide?.closest('.modal-content') || null;
+  }
   if (!drawer) return { ok: false, error: 'no panel' };
 
 
@@ -74,7 +77,7 @@ function readDrawer(): JobResult {
 }
 
 function clickJobDescriptionTab() {
-  const drawer = findPanel() || document.querySelector('.modal-overlay--drawer') || document.querySelector(
+  let drawer = document.querySelector('.modal-content--job-drawer') || document.querySelector(
     'div[role="dialog"][aria-modal="true"].chakra-modal__content',
   );
   if (!drawer) return false;
@@ -86,7 +89,7 @@ function clickJobDescriptionTab() {
 }
 
 function closeAndHide(title: string) {
-  const drawer = findPanel() || document.querySelector('.modal-overlay--drawer') || document.querySelector(
+  let drawer = document.querySelector('.modal-content--job-drawer') || document.querySelector(
     'div[role="dialog"][aria-modal="true"].chakra-modal__content',
   ) as HTMLElement | null;
 
@@ -164,6 +167,10 @@ export default function App() {
         func: readDrawer,
       });
       let extracted = injected?.result as JobResult | undefined;
+      if (injected?.error) {
+        setStatus(String(injected.error.message ?? injected.error));
+        return;
+      }
       if (!extracted?.ok) {
         setStatus(extracted?.error ?? 'failed');
         return;
