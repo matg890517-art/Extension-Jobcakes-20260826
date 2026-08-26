@@ -22,10 +22,20 @@ type JobResult = {
   error?: string;
   title?: string;
   company?: string;
+  logo?: string;
+  companyLink?: string;
   location?: string;
   salary?: string;
+  employmentType?: string;
+  workplaceType?: string;
+  postedAgo?: string;
+  tags?: string[];
+  skills?: string[];
+  applicantsCount?: number;
+  applicantsText?: string;
   apply_url?: string;
   description?: string;
+  id?: string;
 };
 
 type PostingResult = {
@@ -52,28 +62,99 @@ function readDrawer(): JobResult {
   }
   if (!drawer) return { ok: false, error: 'no panel' };
 
-
   const title = drawer.querySelector('.jobs-drawer-company-copy h2')?.textContent?.trim() ?? '';
   const company = (drawer.querySelector('.job-detail-company-name')?.textContent ?? '').replace(/^@\s*/, '').trim();
-  const location =
-    drawer.querySelector('.jobs-drawer-company-meta span:first-child')?.textContent?.trim() ?? '';
-  const salary =
-    [...drawer.querySelectorAll('.jobs-drawer-company-meta span')]
-      .map((el) => el.textContent?.trim())
-      .find((t) => t && /\$[0-9]/.test(t)) ?? '';
+
+  const logoEl = drawer.querySelector('.job-detail-company-logo');
+  const logo =
+    (logoEl instanceof HTMLImageElement ? logoEl.getAttribute('src') : null) ||
+    logoEl?.querySelector('img')?.getAttribute('src') ||
+    '';
+
+  const companyNameEl = drawer.querySelector('.job-detail-company-name');
+  const companyAnchor =
+    companyNameEl instanceof HTMLAnchorElement
+      ? companyNameEl
+      : (companyNameEl?.querySelector('a') ?? companyNameEl?.closest('a'));
+  let companyLink = '';
+  const companyHref = companyAnchor?.getAttribute('href');
+  if (companyHref) {
+    try {
+      companyLink = new URL(companyHref, window.location.origin).href;
+    } catch {
+      companyLink = companyHref;
+    }
+  }
+
+  const metaSpans = [...drawer.querySelectorAll('.jobs-drawer-company-meta span')]
+    .map((el) => el.textContent?.trim() ?? '')
+    .filter(Boolean);
+  const location = metaSpans[0] ?? '';
+  const workplaceType = drawer.querySelector('.jobs-drawer-remote')?.textContent?.trim() ?? '';
+  const salary = metaSpans.find((t) => /\$[0-9]/.test(t)) ?? '';
+  const employmentType =
+    metaSpans.find((t) =>
+      /full[-\s]?time|part[-\s]?time|contract|intern|temporary/i.test(t),
+    ) ?? '';
+  const postedAgo = drawer.querySelector('.jobs-drawer-published-note')?.textContent?.trim() ?? '';
+
+  const boardPills = [...drawer.querySelectorAll('.jobs-job-board-pill')]
+    .map((el) => el.textContent?.trim() ?? '')
+    .filter(Boolean);
+  const tags = [...boardPills, workplaceType].filter((t, i, arr) => t && arr.indexOf(t) === i);
+
+  const skills = [...(drawer.querySelector('.jobs-drawer-skill-chips')?.children ?? [])]
+    .map((el) => el.textContent?.trim() ?? '')
+    .filter(Boolean);
+
+  let applicantsCount: number | undefined;
+  let applicantsText: string | undefined;
+  for (const el of drawer.querySelectorAll('span, div, p, small, a, li')) {
+    const t = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+    if (t.length > 40) continue;
+    const m = t.match(/^(\d+)\s+applicants?$/i);
+    if (m) {
+      applicantsCount = Number(m[1]);
+      applicantsText = t;
+      break;
+    }
+  }
+
   const prep = drawer.querySelector('a[href*="jobId="]')?.getAttribute('href') ?? '';
+  let id = '';
   let apply_url = '';
   if (prep) {
     try {
       const jobId = new URL(prep, window.location.origin).searchParams.get('jobId');
-      if (jobId) apply_url = 'https://app.jobcakes.com/jobs#' + jobId;
+      if (jobId) {
+        id = jobId;
+        apply_url = 'https://app.jobcakes.com/jobs#' + jobId;
+      }
     } catch {
       /* ignore */
     }
   }
   const description = drawer.querySelector('.modal-body')?.textContent?.trim() ?? '';
 
-  return { ok: true, title, company, location, salary, apply_url, description };
+  return {
+    ok: true,
+    title,
+    company,
+    logo,
+    companyLink,
+    location,
+    salary,
+    employmentType,
+    workplaceType,
+    postedAgo,
+    tags,
+    skills,
+    applicantsCount,
+    applicantsText,
+    apply_url,
+    description,
+    id,
+  };
 }
 
 function clickJobDescriptionTab() {
@@ -211,15 +292,29 @@ export default function App() {
         body: JSON.stringify({
           createdBy: 'jobcakes',
           title: extracted.title,
-          company: { name: extracted.company },
-          details: {
-            location: extracted.location,
-            salary: extracted.salary,
+          company: {
+            name: extracted.company,
+            logo: extracted.logo,
+            tags: [],
           },
           description: extracted.description,
           applyLink: extracted.apply_url,
-          scrapefrom: 'jobcakes',
-          collectedAt: new Date().toISOString(),
+          companyLink: extracted.companyLink,
+          postedAgo: extracted.postedAgo,
+          tags: extracted.tags ?? [],
+          skills: extracted.skills ?? [],
+          details: {
+            location: extracted.location,
+            employmentType: extracted.employmentType,
+            workplaceType: extracted.workplaceType,
+            salary: extracted.salary,
+          },
+          applicants: {
+            count: extracted.applicantsCount,
+            text: extracted.applicantsText,
+          },
+          id: extracted.id,
+          scrapeFrom: 'jobcakes',
         }),
       });
 
@@ -310,12 +405,15 @@ export default function App() {
               <Typography variant="body2">{job.company}</Typography>
               <Typography variant="body2">{job.location}</Typography>
               <Typography variant="body2">{job.salary}</Typography>
+              <Typography variant="body2">{job.workplaceType}</Typography>
+              <Typography variant="body2">{job.postedAgo}</Typography>
+              <Typography variant="body2">{(job.skills ?? []).join(', ')}</Typography>
               <Typography variant="caption" sx={{ wordBreak: 'break-all' }}>
                 {job.apply_url}
               </Typography>
               {(!job.apply_url || !job.description) && (
                 <Alert severity="warning">
-                  Missing {!job.apply_url ? "Full View URL" : ""}{!job.apply_url && !job.description ? " and " : ""}{!job.description ? "description" : ""}. Posted anyway.
+                  Missing {!job.apply_url ? "applyLink" : ""}{!job.apply_url && !job.description ? " and " : ""}{!job.description ? "description" : ""}. Posted anyway.
                 </Alert>
               )}
             </>
