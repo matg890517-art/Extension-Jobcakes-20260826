@@ -63,63 +63,98 @@ function readDrawer(): JobResult {
   }
   if (!drawer) return { ok: false, error: 'no panel' };
 
-  const title = drawer.querySelector('.jobs-drawer-company-copy h2')?.textContent?.trim() ?? '';
-  const company = (drawer.querySelector('.job-detail-company-name')?.textContent ?? '').replace(/^@\s*/, '').trim();
+  const absUrl = (raw: string): string => {
+    if (!raw) return '';
+    try {
+      return new URL(raw, window.location.origin).href;
+    } catch {
+      return raw;
+    }
+  };
 
-  const logoEl = drawer.querySelector('img.job-detail-company-logo');
+  const hrefOf = (el: Element | null | undefined, allowParent = false): string => {
+    if (!el) return '';
+    const a =
+      el instanceof HTMLAnchorElement
+        ? el
+        : (el.querySelector('a[href]') ?? (allowParent ? el.closest('a') : null));
+    const href = a?.getAttribute('href')?.trim() ?? '';
+    if (!href || href === '#' || /^(javascript:|mailto:)/i.test(href)) return '';
+    if (/jobId=/i.test(href)) return '';
+    return absUrl(href);
+  };
+
+  const title = drawer.querySelector('.jobs-drawer-company-copy h2')?.textContent?.trim() ?? '';
+  const companyNameEl = drawer.querySelector('span.job-detail-company-name, .job-detail-company-name');
+  const company = (companyNameEl?.textContent ?? '').replace(/^@\s*/, '').trim();
+
+  const logoEl = drawer.querySelector('.job-detail-company-logo');
+  const logoImg =
+    logoEl instanceof HTMLImageElement ? logoEl : logoEl?.querySelector('img') ?? null;
   let logo = '';
-  if (logoEl instanceof HTMLImageElement) {
-    const raw = logoEl.currentSrc || logoEl.src || logoEl.getAttribute('src') || '';
-    if (raw) {
-      try {
-        logo = new URL(raw, window.location.href).href;
-      } catch {
-        logo = raw;
+  if (logoImg instanceof HTMLImageElement) {
+    const srcsetFirst = (logoImg.getAttribute('srcset') || logoImg.srcset || '')
+      .split(',')[0]
+      ?.trim()
+      .split(/\s+/)[0] ?? '';
+    const src = logoImg.getAttribute('src') || logoImg.src || '';
+    const raw = logoImg.currentSrc || src || srcsetFirst;
+    logo = absUrl(raw);
+    if (!logo || logo === window.location.href) logo = absUrl(srcsetFirst);
+  }
+
+  let companyLink = hrefOf(companyNameEl, false) || hrefOf(logoEl, true);
+  if (!companyLink) {
+    const header = drawer.querySelector('.jobs-drawer-company-copy');
+    if (header) {
+      for (const a of header.querySelectorAll('a[href]')) {
+        const label = `${a.textContent ?? ''} ${a.getAttribute('aria-label') ?? ''} ${a.getAttribute('title') ?? ''}`;
+        const href = a.getAttribute('href') ?? '';
+        if (
+          /website|homepage|company site/i.test(label) ||
+          (/^https?:\/\//i.test(href) && !/jobcakes\.com/i.test(href))
+        ) {
+          companyLink = hrefOf(a);
+          if (companyLink) break;
+        }
       }
     }
   }
 
-  const companyNameEl = drawer.querySelector('.job-detail-company-name');
-  const companyAnchor =
-    companyNameEl instanceof HTMLAnchorElement
-      ? companyNameEl
-      : (companyNameEl?.querySelector('a') ?? null);
-  let companyLink = '';
-  const companyHref = companyAnchor?.getAttribute('href') ?? '';
-  if (companyHref && companyHref !== '#' && !/^javascript:/i.test(companyHref)) {
-    try {
-      const abs = new URL(companyHref, window.location.origin).href;
-      if (!/jobcakes\.com/i.test(abs)) companyLink = abs;
-    } catch {
-      companyLink = companyHref;
-    }
+  let metaEls = [...drawer.querySelectorAll('.jobs-drawer-company-meta > span')];
+  if (!metaEls.length) {
+    metaEls = [...drawer.querySelectorAll('.jobs-drawer-company-meta span')];
   }
-
-  const metaSpans = [...drawer.querySelectorAll('.jobs-drawer-company-meta span')]
-    .map((el) => el.textContent?.trim() ?? '')
+  const metaSpans = metaEls
+    .map((el) => (el.textContent ?? '').replace(/\s+/g, ' ').trim())
     .filter(Boolean);
   const location = metaSpans[0] ?? '';
   const workplaceType = drawer.querySelector('.jobs-drawer-remote')?.textContent?.trim() ?? '';
   const salary = metaSpans.find((t) => /\$/.test(t)) ?? '';
-  const companyTags = metaSpans.filter((t) => /employee/i.test(t));
+  const employeeMatches = metaSpans.filter((t) => /employee/i.test(t));
+  const employeeSize = employeeMatches[employeeMatches.length - 1] ?? '';
 
   const postedRaw =
-    drawer.querySelector('.jobs-drawer-published-note span')?.textContent?.trim() ?? '';
-  const postedAgo = postedRaw.replace(/^published\s+/i, '');
+    drawer.querySelector('.jobs-drawer-published-note span')?.textContent?.trim() ??
+    drawer.querySelector('.jobs-drawer-published-note')?.textContent?.trim() ??
+    '';
+  const postedAgo = postedRaw.replace(/^(published|posted)\s*/i, '').trim();
 
-  const skills: string[] = [];
-  const seenSkill = new Set<string>();
-  const skillRoot = drawer.querySelector('.jobs-drawer-skill-chips');
-  const skillNodes = [
-    ...(skillRoot ? [...skillRoot.children] : []),
-    ...drawer.querySelectorAll('[class*="skill-chip"]'),
-  ];
-  for (const el of skillNodes) {
-    const t = el.textContent?.trim() ?? '';
-    if (!t || seenSkill.has(t)) continue;
-    seenSkill.add(t);
-    skills.push(t);
+  const boardNames: string[] = [];
+  for (const el of drawer.querySelectorAll('.jobs-job-board-pill')) {
+    const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+    const titleAttr = (el.getAttribute('title') ?? '').trim();
+    if (text && !boardNames.includes(text)) boardNames.push(text);
+    if (titleAttr && !boardNames.includes(titleAttr)) boardNames.push(titleAttr);
   }
+
+  const companyTags = [employeeSize, ...boardNames].filter(
+    (t, i, arr) => Boolean(t) && arr.indexOf(t) === i,
+  );
+
+  const skills = [...(drawer.querySelector('.jobs-drawer-skill-chips')?.children ?? [])]
+    .map((el) => el.textContent?.trim() ?? '')
+    .filter(Boolean);
 
   let applicantsCount: number | undefined;
   let applicantsText: string | undefined;
@@ -149,39 +184,66 @@ function readDrawer(): JobResult {
     }
   }
 
-  const descParts: string[] = [];
+  const sectionParts: string[] = [];
   for (const section of drawer.querySelectorAll('.job-detail-section')) {
-    const heading = section.querySelector('h3.job-detail-section-title')?.textContent?.trim() ?? '';
+    const heading = (section.querySelector('h3.job-detail-section-title')?.textContent ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!heading) continue;
+    if (/scores?|skill\s*match/i.test(heading)) continue;
     if (!/^(summary|responsibilities|qualifications|about|description|requirements)\b/i.test(heading)) {
       continue;
     }
     const bodyBits: string[] = [];
-    for (const p of section.querySelectorAll('p.job-detail-text')) {
-      const t = (p.textContent ?? '').replace(/\s+/g, ' ').trim();
-      if (t) bodyBits.push(t);
+    for (const node of section.querySelectorAll('p.job-detail-text, ul.job-detail-list')) {
+      if (node.matches('p.job-detail-text')) {
+        const t = (node.textContent ?? '').replace(/\s+/g, ' ').trim();
+        if (t) bodyBits.push(t);
+      } else {
+        for (const li of node.querySelectorAll('li')) {
+          const t = (li.textContent ?? '').replace(/\s+/g, ' ').trim();
+          if (t) bodyBits.push(t);
+        }
+      }
     }
-    for (const li of section.querySelectorAll('ul.job-detail-list li')) {
-      const t = (li.textContent ?? '').replace(/\s+/g, ' ').trim();
-      if (t) bodyBits.push(t);
-    }
-    const body = bodyBits.join(' ');
-    if (body) descParts.push(`${heading}: ${body}`);
+    const body = bodyBits.join('\n');
+    if (!body) continue;
+    sectionParts.push(`${heading}\n${body}\n`);
   }
-  let description = descParts.join('\n\n');
+  let description = sectionParts.join('\n').trim();
   if (!description) {
     description = drawer.querySelector('.modal-body')?.textContent?.trim() ?? '';
   }
 
-  let employmentType =
-    metaSpans.find((t) =>
-      /full[-\s]?time|part[-\s]?time|contract|intern|temporary/i.test(t),
-    ) ?? '';
-  if (!employmentType) {
-    const m = description.match(/\b(full[-\s]?time|part[-\s]?time|contract|intern(?:ship)?|temporary)\b/i);
-    if (m) employmentType = m[1];
+  const EMP_RE = /full[-\s]?time|part[-\s]?time|contract|\bintern(?:ship)?s?\b|temporary/i;
+  const normalizeEmployment = (raw: string): string => {
+    if (/full[-\s]?time/i.test(raw)) return 'Full-time';
+    if (/part[-\s]?time/i.test(raw)) return 'Part-time';
+    if (/\bintern(?:ship)?s?\b/i.test(raw)) return 'Internship';
+    if (/contract/i.test(raw)) return 'Contract';
+    if (/temporary/i.test(raw)) return 'Temporary';
+    return raw.trim();
+  };
+  let employmentRaw = metaSpans.find((t) => EMP_RE.test(t)) ?? '';
+  if (!employmentRaw) {
+    const m = description.match(EMP_RE);
+    if (m) employmentRaw = m[0];
   }
+  const employmentType = employmentRaw ? normalizeEmployment(employmentRaw) : '';
 
-  const tags = [workplaceType, employmentType].filter((t, i, arr) => t && arr.indexOf(t) === i);
+  const tags: string[] = [];
+  const pushTag = (t: string) => {
+    if (t && !tags.includes(t)) tags.push(t);
+  };
+  pushTag(workplaceType);
+  pushTag(employmentType);
+  for (const t of metaSpans) {
+    if (t === location) continue;
+    if (/\$/.test(t)) continue;
+    if (/employee/i.test(t)) continue;
+    if (t.length > 48) continue;
+    pushTag(t);
+  }
 
   return {
     ok: true,
@@ -195,8 +257,8 @@ function readDrawer(): JobResult {
     workplaceType,
     postedAgo,
     tags,
-    skills,
     companyTags,
+    skills,
     applicantsCount,
     applicantsText,
     apply_url,
@@ -358,9 +420,10 @@ export default function App() {
             workplaceType: extracted.workplaceType,
             salary: extracted.salary,
           },
-          applicants: extracted.applicantsText
-            ? { count: extracted.applicantsCount, text: extracted.applicantsText }
-            : { count: null, text: '' },
+          applicants: {
+            count: extracted.applicantsCount,
+            text: extracted.applicantsText,
+          },
           id: extracted.id,
           scrapeFrom: 'jobcakes',
         }),
@@ -461,8 +524,11 @@ export default function App() {
               <Typography variant="body2">{job.company}</Typography>
               <Typography variant="body2">{job.location}</Typography>
               <Typography variant="body2">{job.salary}</Typography>
+              <Typography variant="body2">{job.employmentType}</Typography>
               <Typography variant="body2">{job.workplaceType}</Typography>
               <Typography variant="body2">{job.postedAgo}</Typography>
+              <Typography variant="body2">{(job.tags ?? []).join(', ')}</Typography>
+              <Typography variant="body2">{(job.companyTags ?? []).join(', ')}</Typography>
               <Typography variant="body2">{(job.skills ?? []).join(', ')}</Typography>
               <Typography variant="caption" sx={{ wordBreak: 'break-all' }}>
                 {job.apply_url}
